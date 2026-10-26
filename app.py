@@ -6,7 +6,7 @@ import streamlit as st
 
 from data import make_scenario, make_voyages
 from models import contributions, predict_days, train_model
-
+from compass import recommend, risk_score, train_compass
 LEADERBOARD = "leaderboard.csv"
 
 st.set_page_config(page_title="The AI Captain", page_icon="⚓")
@@ -28,7 +28,8 @@ def get_model():
     """Train once at startup, then reuse."""
     voyages = make_voyages()
     model, test_mae = train_model(voyages)
-    return voyages, model, test_mae
+    tree, tree_acc = train_compass(model)
+    return voyages, model, test_mae, tree, tree_acc
 
 
 def save_result(human_mae, ai_mae):
@@ -51,6 +52,7 @@ def new_game():
     ss.saved = False
     for i in range(3):
         ss.pop(f"g{i}", None)
+        ss.pop(f"w{i}", None)
 
 
 def go(screen):
@@ -62,10 +64,22 @@ ss = st.session_state
 if "screen" not in ss:
     new_game()
 
-voyages, model, test_mae = get_model()
+voyages, model, test_mae, tree, tree_acc = get_model()
 scenario = make_scenario(ss.seed)
 scenario["ai"] = [predict_days(model, r.distance, r.waves, r.wind)
                   for r in scenario.itertuples()]
+
+def show_compass(days, waves):
+    """Table of predictions and risks, the tree's questions, and its recommendation."""
+    risks = [risk_score(w) for w in waves]
+    st.dataframe(pd.DataFrame({
+        "Route": scenario["route"],
+        "Predicted time (days)": [round(d, 1) for d in days],
+        "Storm risk": [round(r, 2) for r in risks]}), hide_index=True)
+    choice, steps = recommend(tree, days, risks)
+    for i, step in enumerate(steps, 1):
+        st.write(f"{i}. {step}")
+    st.success(f"The compass recommends route **{scenario['route'][choice]}**")
 
 st.title("⚓ The AI Captain")
 st.caption("The Flying Dutchman must reach a mysterious island. "
@@ -143,9 +157,33 @@ elif ss.screen == "reveal":
         save_result(human_mae, ai_mae)
         ss.saved = True
     ss.human_mae, ss.ai_mae = human_mae, ai_mae
+    if st.button("Ask the compass", type="primary"):
+        go("compass")
+
+# ---------------------------------------------------------------- compass
+elif ss.screen == "compass":
+    st.header("The intelligent compass")
+    st.write("The predicted times from the AI captain now go into a decision tree, "
+             "together with a storm-risk score for each route. Here is how it reasons:")
+    show_compass(list(scenario["ai"]), list(scenario["waves"]))
+    st.caption("The tree learned from 3,000 simulated scenarios, each labelled with the "
+               "route that has the lowest ‘days + 6 × risk’. On scenarios it had never "
+               f"seen, it agreed with that rule {tree_acc:.0%} of the time.")
+    if st.button("Change the weather", type="primary"):
+        go("experiment")
+
+# ------------------------------------------------------------- experiment
+elif ss.screen == "experiment":
+    st.header("Change the weather")
+    st.write("Move the wave heights. The AI captain predicts again, "
+             "and the compass may change its mind.")
+    waves = [st.slider(f"{r.route} waves (m)", 0.5, 5.0, float(r.waves), 0.1,
+                       key=f"w{i}") for i, r in enumerate(scenario.itertuples())]
+    days = [predict_days(model, r.distance, w, r.wind)
+            for r, w in zip(scenario.itertuples(), waves)]
+    show_compass(days, waves)
     if st.button("See the leaderboard", type="primary"):
         go("result")
-
 # ----------------------------------------------------------------- result
 elif ss.screen == "result":
     st.header("Leaderboard")
