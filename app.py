@@ -3,6 +3,8 @@ import time
 
 import pandas as pd
 import streamlit as st
+import base64
+from pathlib import Path
 
 from data import make_scenario, make_voyages
 from models import contributions, predict_days, train_model
@@ -10,18 +12,25 @@ from compass import recommend, risk_score, train_compass
 LEADERBOARD = "leaderboard.csv"
 
 st.set_page_config(page_title="The AI Captain", page_icon="⚓")
-st.markdown("""
+@st.cache_data
+def background_css():
+    img = Path(__file__).parent / "static" / "ghost-ship.jpg"
+    encoded = base64.b64encode(img.read_bytes()).decode()
+    return f"""
 <style>
-.stApp {
+.stApp {{
     background-image:
         linear-gradient(rgba(6, 22, 27, 0.70), rgba(6, 22, 27, 0.70)),
-        url("/app/static/ghost-ship.jpg");
+        url("data:image/jpeg;base64,{encoded}");
     background-size: cover;
     background-position: center;
     background-attachment: fixed;
-}
+}}
 </style>
-""", unsafe_allow_html=True)
+"""
+
+
+st.markdown(background_css(), unsafe_allow_html=True)
 
 @st.cache_resource
 def get_model():
